@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no">
+        <script src="https://supertestnet.github.io/bankify/super_nostr.js"></script>
+        <script src="https://bundle.run/noble-secp256k1@1.2.14"></script>
+        <script src="https://bundle.run/bech32@2.0.0"></script>
+        <style>
+            * {
+                box-sizing: border-box;
+                font-size: 1.15rem;
+                font-family: Arial, sans-serif;
+            }
+            html {
+                max-width: 800px;
+                padding: 3rem 1rem;
+                margin: auto;
+                line-height: 1.25;
+                padding: 0;
+            }
+            body {
+                margin: 3rem 1rem;
+                word-wrap: break-word;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            h2 {
+                font-size: 1.5rem;
+            }
+            input {
+                line-height: 1.25;
+                width: 100%;
+                height: 1.8rem;
+                font-size: 1.15rem;
+                border: 1px solid grey;
+            }
+            .hidden {
+                display: none !important;
+            }
+            .window {
+                padding: 1rem;
+                border: 1px solid black;
+                border-radius: 1rem;
+                min-height: 20rem;
+            }
+            .pink {
+                background-color: pink;
+            }
+            .lightgreen {
+                background-color: lightgreen;
+            }
+            .lightblue {
+                background-color: lightblue;
+            }
+            .category {
+                border: 1px solid black;
+                margin-bottom: 1rem;
+            }
+            .category_summary {
+                display: flex;
+                justify-content: space-between;
+                padding: 0.5rem;
+                cursor: pointer;
+            }
+            .item {
+                padding: 1rem 0.5rem;
+                background-color: #cccccc;
+                margin: .5rem;
+                margin-bottom: 0;
+            }
+            .items div {
+                margin-bottom: .5rem;
+            }
+            .hist_item {
+                margin: 0;
+            }
+            .hist_link {
+                color: blue;
+                text-decoration: underline;
+                cursor: pointer;
+            }
+            .entrynum_div {
+                text-decoration: underline;
+            }
+            .hist_item .item_data {
+                margin: .5rem 0;
+            }
+            .lnr_buttons {
+                display: flex;
+                justify-content: space-between;
+            }
+            @media screen and (max-width: 600px) {
+            }
+        </style>
+        <script>
+            var $ = document.querySelector.bind( document );
+            var $$ = document.querySelectorAll.bind( document );
+            var url_params = new URLSearchParams( window.location.search );
+            var url_keys = url_params.keys();
+            var $_GET = {}
+            for ( var key of url_keys ) $_GET[ key ] = url_params.get( key );
+        </script>
+    </head>
+    <body>
+        <h1>Title Transfer App</h1>
+        <div class="window"></div>
+        <script>
+            var sats_app = {
+                state: {
+                    "abababababababab": {
+                        name: null,
+                        privkey: null,
+                        escrow: null,
+                        categories: {},
+                        titles: {
+                            // "abababababababab": {
+                            //     chain_of_custody: [
+                            //         {
+                            //             escrow: "nprofile1qyghwumn8ghj7mn0wd68yat99e3k7mgqyqwwlqa7725a2p6kzsyvjjgdnaff4mfhh4mdw26zwwrsekgzvng0z72xery",
+                            //             category: "banana",
+                            //             title_issuer: "Jimmy's Grocery",
+                            //             signer_privkey: "99".repeat( 32 ),
+                            //             msg: "The title issuer hereby affirms that the titleholder may redeem this title at any of their facilities for 1 product or service representative of this category, or an amount of bitcoin worth the same, according to the median rate of exchange given by the following sources: example1.com, example2.com, example3.com",
+                            //             time: Math.floor( Date.now() / 1000 ) - 600,
+                            //             sigs: [ "ab".repeat( 64 ) ],
+                            //             keys: [ "00".repeat( 32 ) ],
+                            //         },
+                            //         {
+                            //             description: "bought from Jimmy's Grocery store",
+                            //             msg: "This title is hereby transferred from the sender to the recipient",
+                            //             time: Math.floor( Date.now() / 1000 ),
+                            //             sigs: [ "ab".repeat( 64 ), "ba".repeat( 64 ) ],
+                            //             keys: [ "00".repeat( 32 ), "11".repeat( 32 ) ],
+                            //         },
+                            //     ],
+                            // },
+                        }
+                    }
+                },
+                bytesToHex: bytes => bytes.reduce( ( str, byte ) => str + byte.toString( 16 ).padStart( 2, "0" ), "" ),
+                hexToBytes: hex => Uint8Array.from( hex.match( /.{1,2}/g ).map( byte => parseInt( byte, 16 ) ) ),
+                hexToBase64: hex => btoa( hex.match( /\w{2}/g ).map( a => String.fromCharCode( parseInt( a, 16 ) ) ).join( "" ) ),
+                sha256: s => {
+                    if ( typeof s == "string" ) s = new TextEncoder().encode( s );
+                    return crypto.subtle.digest( 'SHA-256', s ).then( hashBuffer => {
+                        var hashArray = Array.from( new Uint8Array( hashBuffer ) );
+                        var hashHex = hashArray
+                            .map( bytes => bytes.toString( 16 ).padStart( 2, '0' ) )
+                            .join( '' );
+                        return hashHex;
+                    });
+                },
+                convertNEvent: nevent => {
+                    var arr = bech32.bech32.fromWords( bech32.bech32.decode( nevent, 100_000 ).words );
+                    var hex = sats_app.bytesToHex( arr );
+                    if ( !hex.startsWith( "0020" ) ) var event_id = hex.substring( hex.length - 64 );
+                    else var event_id = hex.substring( 4, 68 );
+                    if ( !hex.startsWith( "0020" ) ) hex = hex.substring( 0, hex.length - 64 );
+                    else hex = hex.substring( 68 );
+                    var relays = [];
+                    var loop = () => {
+                        if ( hex.startsWith( "01" ) ) {
+                            var relay_length = parseInt( hex.substring( 2, 4 ), 16 );
+                            relays.push( sats_app.hexToText( hex.substring( 4, 4 + relay_length * 2 ) ) );
+                            hex = hex.substring( 4 + relay_length * 2 );
+                            loop();
+                        }
+                    }
+                    loop();
+                    return [ event_id, relays ];
+                },
+                hexToText: hex => {
+                    var bytes = new Uint8Array( Math.ceil( hex.length / 2 ) );
+                    var i; for ( i = 0; i < hex.length; i++ ) bytes[ i ] = parseInt( hex.substr( i * 2, 2 ), 16 );
+                    var text = new TextDecoder().decode( bytes );
+                    return text;
+                },
+                contactOperator: async ( msg, nprofile ) => {
+                    var [ operator, relays ] = sats_app.convertNEvent( nprofile );
+                    var privkey = super_nostr.getPrivkey();
+                    var pubkey = super_nostr.getPubkey( privkey );
+                    var emsg = await super_nostr.encrypt( privkey, operator, msg );
+                    var event = await super_nostr.prepEvent( privkey, emsg, 4, [ [ "p", operator ] ] );
+                    super_nostr.sendEvent( event, relays[ 0 ] );
+                    var loop = async () => {
+                        var relay = relays[ 0 ];
+                        var ids = null;
+                        var authors = null;
+                        var kinds = [ 4 ];
+                        var until = null;
+                        var since = Math.floor( Date.now() / 1000 ) - 5;
+                        var limit = null;
+                        var etags = null;
+                        var ptags = [ pubkey ];
+                        var events = await super_nostr.getEvents( relay, ids, authors, kinds, until, since, limit, etags, ptags );
+                        var unhandled_events = [];
+                        events.forEach( item => {
+                            if ( item.pubkey !== operator ) return;
+                            unhandled_events.push( item );
+                        });
+                        if ( unhandled_events.length ) {
+                            try {
+                                var unhandled_event = unhandled_events[ 0 ];
+                                var dmsg = await super_nostr.decrypt( privkey, unhandled_event.pubkey, unhandled_event.content );
+                                var json = JSON.parse( dmsg );
+                                return json;
+                            } catch( e ) {}
+                        }
+                        await super_nostr.waitSomeSeconds( 4 );
+                        return await loop();
+                    }
+                    var reply = await loop();
+                    return reply;
+                },
+                encrypt: async ( privkey, pubkey, text ) => {
+                    var msg = ( new TextEncoder() ).encode( text );
+                    var iv = window.crypto.getRandomValues( new Uint8Array( 16 ) );
+                    var key_raw = sats_app.hexToBytes( nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 ) );
+                    var key = await window.crypto.subtle.importKey(
+                        "raw",
+                        key_raw,
+                        "AES-CBC",
+                        false,
+                        [ "encrypt", "decrypt" ],
+                    );
+                    var emsg = await window.crypto.subtle.encrypt(
+                        {
+                            name: "AES-CBC",
+                            iv,
+                        },
+                        key,
+                        msg,
+                    )
+                    emsg = new Uint8Array( emsg );
+                    var arr = emsg;
+                    emsg = sats_app.hexToBase64( sats_app.bytesToHex( emsg ) ) + "?iv=" + btoa( String.fromCharCode.apply( null, iv ) );
+                    return emsg;
+                },
+                decrypt: async ( privkey, pubkey, ciphertext ) => {
+                    var [ emsg, iv ] = ciphertext.split( "?iv=" );
+                    var key_raw = sats_app.hexToBytes( nobleSecp256k1.getSharedSecret( privkey, '02' + pubkey, true ).substring( 2 ) );
+                    var key = await window.crypto.subtle.importKey(
+                        "raw",
+                        key_raw,
+                        "AES-CBC",
+                        false,
+                        [ "encrypt", "decrypt" ],
+                    );
+                    var decrypted = await window.crypto.subtle.decrypt(
+                        {
+                            name: "AES-CBC",
+                            iv: sats_app.base64ToBytes( iv ),
+                        },
+                        key,
+                        sats_app.base64ToBytes( emsg ),
+                    );
+                    var msg = ( new TextDecoder() ).decode( decrypted );
+                    return msg;
+                },
+                base64ToBytes: str => {
+                    var raw = atob( str );
+                    var result = [];
+                    var i; for ( i=0; i<raw.length; i++ ) result.push( raw.charCodeAt( i ) );
+                    return new Uint8Array( result );
+                },
+            }
+            super_nostr.encrypt = sats_app.encrypt;
+            super_nostr.decrypt = sats_app.decrypt;
+            var showHist = ( title_id, num = 0 ) => {
+                var history = sats_app.state[ "abababababababab" ].titles[ title_id ].chain_of_custody;
+                $( '.window' ).innerHTML = ``;
+                var html = `
+                    <h2>History</h2>
+                `;
+                html = html + `
+                    <p class="lnr_buttons" data-index="${num}" data-title_id="${title_id}"><button class="l_btn"><</button><button class="r_btn">></button></p>
+                    <div class="item hist_item">
+                        <div class="item_data entrynum_div">Entry #<span class="entry_number">${num + 1}</div>
+                        <div class="metadata"></div>
+                        <div class="item_data"><span class="entrynum_div">Message</span>: <span class="entrytext"></span></div>
+                        <div class="keys_n_sigs"></div>
+                    </div>
+                `;
+                var back_btn = `<p><button class="back_to_titles">Back</button></p>`;
+                html = html + back_btn;
+                var div = document.createElement( "div" );
+                div.innerHTML = html;
+                console.log( num, title_id, history[ num ] );
+                div.getElementsByClassName( "entrytext" )[ 0 ].innerText = history[ num ][ "msg" ];
+                $( '.window' ).append( div );
+                if ( num === history.length - 1 ) $( '.r_btn' ).disabled = true;
+                if ( !num ) {
+                    $( '.l_btn' ).disabled = true;
+                    if ( "title_issuer" in history[ num ] && "category" in history[ num ] ) {
+                        div.getElementsByClassName( "metadata" )[ 0 ].innerHTML = `<div class="item_data"><span class="entrynum_div">Category</span>: <span class="item_category"></div><div class="item_data"><span class="entrynum_div">Title issuer</span>: <span class="item_title_issuer"></div>`;
+                        div.getElementsByClassName( "item_category" )[ 0 ].innerText = history[ num ][ "category" ];
+                        div.getElementsByClassName( "item_title_issuer" )[ 0 ].innerText = history[ num ][ "title_issuer" ];
+                        div.getElementsByClassName( "keys_n_sigs" )[ 0 ].innerHTML = `<div class="item_data"><span class="entrynum_div">Public key</span>: <span class="pubkey"></div><div class="item_data"><span class="entrynum_div">Signature</span>: <span class="sig"></div>`;
+                        div.getElementsByClassName( "sig" )[ 0 ].innerText = history[ num ][ "sigs" ][ 0 ];
+                        div.getElementsByClassName( "pubkey" )[ 0 ].innerText = history[ num ][ "keys" ][ 0 ];
+                    }
+                } else {
+                    div.getElementsByClassName( "keys_n_sigs" )[ 0 ].innerHTML = `<div class="item_data"><div class="item_data"><span class="entrynum_div">Sender public key</span>: <span class="sender_pubkey"></div><div class="item_data"><span class="entrynum_div">Recipient public key</span>: <span class="recipient_pubkey"></div><span class="entrynum_div">Sender signature</span>: <span class="sender_sig"></div><div class="item_data"><span class="entrynum_div">Recipient signature</span>: <span class="recipient_sig"></div>`;
+                    div.getElementsByClassName( "sender_sig" )[ 0 ].innerText = history[ num ][ "sigs" ][ 0 ];
+                    div.getElementsByClassName( "sender_pubkey" )[ 0 ].innerText = history[ num ][ "keys" ][ 0 ];
+                    div.getElementsByClassName( "recipient_sig" )[ 0 ].innerText = history[ num ][ "sigs" ][ 1 ];
+                    div.getElementsByClassName( "recipient_pubkey" )[ 0 ].innerText = history[ num ][ "keys" ][ 1 ];
+                }
+                var lOrR = l_or_r => {
+                    var index = Number( $( '.lnr_buttons' ).getAttribute( "data-index" ) );
+                    var title_id = $( '.lnr_buttons' ).getAttribute( "data-title_id" );
+                    var history = sats_app.state[ "abababababababab" ].titles[ title_id ].chain_of_custody;
+                    if ( l_or_r === "left" && !index ) return;
+                    if ( l_or_r === "right" && index === history.length - 1 ) return;
+                    if ( l_or_r === "left" ) index = index - 1;
+                    else index = index + 1;
+                    $( '.lnr_buttons' ).setAttribute( "data-title_id", index );
+                    showHist( title_id, index );
+                }
+                $( '.l_btn' ).onclick = () => {lOrR( "left" );}
+                $( '.r_btn' ).onclick = () => {lOrR( "right" );}
+                $( '.back_to_titles' ).onclick = populateTitles;
+            }
+            var populateTitles = () => {
+                $( '.window' ).innerHTML = ``;
+                var html = `<h2>Titles</h2>`;
+                var html_after_header = ``;
+                var cat_colors = [ "pink", "lightgreen", "lightblue" ];
+                sats_app.state[ "abababababababab" ].categories = {}
+                Object.keys( sats_app.state[ "abababababababab" ].titles ).forEach( title_id => {
+                    var title = sats_app.state[ "abababababababab" ].titles[ title_id ];
+                    var category = title.chain_of_custody[ 0 ].category;
+                    if ( !Object.keys( sats_app.state[ "abababababababab" ].categories ).includes( category ) ) sats_app.state[ "abababababababab" ].categories[ category ] = [];
+                    sats_app.state[ "abababababababab" ].categories[ category ].push( title_id );
+                });
+                Object.keys( sats_app.state[ "abababababababab" ].categories ).forEach( ( category, index ) => {
+                    html_after_header = html_after_header + `
+                        <div class="category">
+                            <div class="category_summary ${cat_colors[ index % 3 ]}">
+                                <span class="category_name">${category}</span>
+                                <span>(${sats_app.state[ "abababababababab" ].categories[ category ].length})</span>
+                            </div>
+                            <div class="items hidden"></div>
+                        </div>
+                    `;
+                });
+                if ( !html_after_header ) {
+                    html_after_header = `
+                        <p>No titles</p>
+                    `;
+                }
+                var add_titles_btn = `<p><button class="add_titles_btn">Add titles</button></p>`;
+                html = html + html_after_header + add_titles_btn;
+                var div = document.createElement( "div" );
+                div.innerHTML = html;
+                $( '.window' ).append( div );
+                $$( '.category' ).forEach( category => {
+                    var category_name = category.getElementsByClassName( "category_name" )[ 0 ].innerText;
+                    category.getElementsByClassName( "category_summary" )[ 0 ].onclick = e => {
+                        var target = e.target;
+                        if ( target.tagName === "SPAN" ) target = target.parentElement.parentElement.getElementsByClassName( "category_summary" )[ 0 ];
+                        var html = ``;
+                        var items = target.parentElement.getElementsByClassName( "items" )[ 0 ];
+                        items.innerHTML = ``;
+                        if ( !items.classList.contains( "hidden" ) ) items.classList.add( "hidden" );
+                        else items.classList.remove( "hidden" );
+                        sats_app.state[ "abababababababab" ].categories[ category_name ].forEach( ( title_id, index ) => {
+                            var history = sats_app.state[ "abababababababab" ].titles[ title_id ].chain_of_custody;
+                            var hist_link = history.length ? "View&nbsp;history" : "No&nbsp;history";
+                            var class_to_display = history.length ? "hist_link" : "";
+                            var onclick_to_display = history.length ? ` onclick="showHist( this.getAttribute( 'data-title_id' ), ${history.length - 1} );"` : "";
+                            html = html + `
+                                <div class="item">
+                                    <div>Item #<span class="item_number">${index + 1}</span></div>
+                                    <div>Label: <span class="item_label">${history[ history.length - 1 ].description || "no label"}</span></div>
+                                    <div>Ownership history: <span class="${class_to_display}" data-title_id="${title_id}"${onclick_to_display}>${hist_link}</span></div>
+                                    <div><button data-title_id="${title_id}" onclick="sendTitle( this.getAttribute( 'data-title_id' ) );">Send</button></div>
+                                </div>
+                            `;
+                        });
+                        var div = document.createElement( "div" );
+                        div.innerHTML = html;
+                        items.append( div );
+                    }
+                });
+                $( '.add_titles_btn' ).onclick = async () => {
+                    var creating_or_receiving = confirm( `Click ok if you are receiving a title. If you are creating a title, click cancel` );
+                    creating_or_receiving = creating_or_receiving ? "receiving" : "creating";
+                    if ( creating_or_receiving === "creating" ) {
+                        var user_id = "ab".repeat( 8 );
+                        if ( !sats_app.state[ user_id ].name ) {
+                            var username = prompt( `Enter the name you want on your contracts` );
+                            sats_app.state[ user_id ].name = username;
+                        } else var username = sats_app.state[ user_id ].name;
+                        if ( !sats_app.state[ user_id ].privkey ) {
+                            var privkey = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+                            sats_app.state[ user_id ].privkey = privkey;
+                        } else var privkey = sats_app.state[ user_id ].privkey;
+                        if ( !sats_app.state[ user_id ].escrow ) {
+                            var escrow = prompt( `Enter the nprofile of the escrow you want to use` );
+                            sats_app.state[ user_id ].escrow = escrow;
+                        } else var escrow = sats_app.state[ user_id ].escrow;
+                        var msg = prompt( `Enter the text of your title` );
+                        var category = prompt( `Identify the product or service you are making a title for (e.g. is it a banana? A promise to mow 1 acre of land? An iceberg?` );
+                        var now = Math.floor( Date.now() / 1000 );
+                        var now_as_hex = now.toString( 16 ).padStart( 8, "0" );
+                        var pubkey = nobleSecp256k1.getPublicKey( privkey, true ).substring( 2 );
+                        var preimage = `${msg}${now_as_hex}`;
+                        var hash = await sats_app.sha256( preimage );
+                        var signer_privkey = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+                        var signer_pubkey = nobleSecp256k1.getPublicKey( signer_privkey, true ).substring( 2 );
+                        var sig = await nobleSecp256k1.schnorr.sign( hash, signer_privkey );
+                        var msg_id = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                        var msg_for_operator = {
+                            type: "new_coin",
+                            msg: {
+                                msg_id,
+                                signer_pubkey,
+                                nprofile: escrow,
+                            }
+                        }
+                        var reply = await sats_app.contactOperator( JSON.stringify( msg_for_operator ), escrow );
+                        var { coin_id, a_value, parity_byte, pubkey: operator_pubkey } = reply.msg;
+                        var title_id = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                        var title = {
+                            a_value,
+                            parity_byte,
+                            escrow,
+                            category,
+                            title_issuer: username,
+                            msg,
+                            time: now,
+                            signer_privkey,
+                            sigs: [ sig ],
+                            keys: [ signer_pubkey ],
+                        }
+                        sats_app.state[ "abababababababab" ].titles[ title_id ] = {
+                            coin_id,
+                            operator_pubkey,
+                            chain_of_custody: [ title ],
+                        }
+                        populateTitles();
+                    } else {
+                        var title = JSON.parse( prompt( `enter the text sent to you by the sender` ) );
+                        var conf = confirm( `do you want this title?\n\n${title.chain_of_custody[ 0 ].msg}` );
+                        if ( !conf ) return;
+                        var new_signer_privkey = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() );
+                        var new_signer_pubkey = nobleSecp256k1.getPublicKey( new_signer_privkey, true ).substring( 2 );
+                        var coin_id = title.coin_id; 
+                        var escrow = title.chain_of_custody[ 0 ].escrow;
+                        var latest_entry = title.chain_of_custody[ title.chain_of_custody.length - 1 ];
+                        var a_value = latest_entry.a_value;
+                        var signer_privkey = latest_entry.signer_privkey;
+                        var msg_id = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 32 );
+                        var msg = `This title is hereby transferred to ${new_signer_pubkey}`;
+                        var now = Math.floor( Date.now() / 1000 );
+                        var now_as_hex = now.toString( 16 ).padStart( 8, "0" );
+                        //calculate the previous preimage via iterative hashing
+                        //todo: validate every signature
+                        var prevhash = null;
+                        var idx = 0;
+                        var loop = async () => {
+                            var entry = title.chain_of_custody[ idx ];
+                            var time_as_hex = entry.time.toString( 16 ).padStart( 8, "0" );
+                            if ( !prevhash ) var preimage = `${entry.msg}${time_as_hex}`;
+                            else var preimage = `${prevhash}${entry.msg}${time_as_hex}`;
+                            if ( idx < title.chain_of_custody.length ) return;
+                            idx = idx + 1;
+                            var prevhash = await sats_app.sha256( preimage );
+                            return loop();
+                        }
+                        await loop();
+                        var preimage = `${prevhash}${msg}${now_as_hex}`;
+                        var sighash_1 = await sats_app.sha256( preimage );
+                        var sighash_2 = "ab".repeat( 32 );
+                        var sig_of_sighash_1 = await nobleSecp256k1.schnorr.sign( sighash_1, signer_privkey );
+                        var sig_of_sighash_2 = await nobleSecp256k1.schnorr.sign( sighash_2, signer_privkey );
+                        var sig_2_of_sighash_1 = await nobleSecp256k1.schnorr.sign( sighash_1, new_signer_privkey );
+                        var msg_for_operator = {
+                            type: "transfer",
+                            msg: {
+                                msg_id,
+                                nprofile: escrow,
+                                a_value,
+                                sighash_1,
+                                sighash_2,
+                                sig_of_sighash_1,
+                                sig_of_sighash_2,
+                                signer_pubkey: new_signer_pubkey,
+                                coin_id,
+                            }
+                        }
+                        var reply = await sats_app.contactOperator( JSON.stringify( msg_for_operator ), escrow );
+                        var { a_value, num_of_times_signed, parity_byte, sig_1, sig_2 } = reply.msg;
+                        if ( !sig_2 ) return alert( `something went wrong, transfer aborted` );
+                        var label = prompt( `transfer successful, please enter a label for this transfer` );
+                        var title_id = sats_app.bytesToHex( nobleSecp256k1.utils.randomPrivateKey() ).substring( 0, 16 );
+                        var new_entry = {
+                            signer_privkey: new_signer_privkey,
+                            a_value,
+                            parity_byte,
+                            description: label,
+                            msg,
+                            time: now,
+                            sigs: [ sig_of_sighash_1, sig_2_of_sighash_1 ],
+                            keys: [ nobleSecp256k1.getPublicKey( signer_privkey, true ).substring( 2 ), new_signer_pubkey ],
+                        }
+                        //todo: do something with the parity byte -- I think it's for when I validate
+                        //all the sigs -- and also do something with the num_of_times_signed, which
+                        //I think is also for that time
+                        // console.log( a_value, num_of_times_signed, parity_byte, sig_1, sig_2 );
+                        title.chain_of_custody.push( new_entry );
+                        sats_app.state[ "abababababababab" ].titles[ title_id ] = title;
+                        populateTitles();
+
+                    }
+                }
+            }
+            populateTitles();
+            var sendTitle = async title_id => {
+                var conf = confirm( `click ok if you are sure you want to send this item to someone, otherwise click cancel` );
+                if ( !conf ) return;
+                console.log( 'send this to your recipient:' );
+                console.log( JSON.stringify( sats_app.state[ "abababababababab" ].titles[ title_id ] ) );
+                delete sats_app.state[ "abababababababab" ].titles[ title_id ];
+                await populateTitles();
+                alert( 'send your recipient the text in your console' );
+            }
+        </script>
+    </body>
+</html>
