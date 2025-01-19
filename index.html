@@ -399,7 +399,7 @@
                             sats_app.state[ user_id ].privkey = privkey;
                         } else var privkey = sats_app.state[ user_id ].privkey;
                         if ( !sats_app.state[ user_id ].escrow ) {
-                            var escrow = prompt( `Enter the nprofile of the escrow you want to use` );
+                            var escrow = prompt( `Enter the nprofile of the statechain operator you want to use. Find a statechain operator here or run the operator software yourself: https://supertestnet.github.io/statechainjs/opops.html?confused=true` );
                             sats_app.state[ user_id ].escrow = escrow;
                         } else var escrow = sats_app.state[ user_id ].escrow;
                         var msg = prompt( `Enter the text of your title` );
